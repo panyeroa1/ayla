@@ -1,0 +1,9 @@
+{
+  "name": "ayla",
+  "description": "An advanced voice assistant powered by the Gemini Live API. Engage in real-time conversations, utilize powerful tools for productivity and social media, and get grounded, accurate information on demand.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation",
+    "camera"
+  ]
+}
