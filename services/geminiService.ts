@@ -36,6 +36,15 @@ export function startLiveSession(settings: AppSettings, callbacks: LiveCallbacks
   }
 
   const tools = Object.keys(toolConfig).length > 0 ? [toolConfig] : undefined;
+  
+  let finalSystemInstruction = settings.systemInstruction.replace('{language}', settings.language || 'English');
+  let voiceName = settings.voice;
+
+  if (voiceName.startsWith('English in')) {
+      const accent = voiceName.replace('English in ', '').replace(' Accent', '');
+      finalSystemInstruction += `\n\nSPECIAL INSTRUCTION: For all your spoken responses, you MUST adopt a convincing, natural-sounding ${accent} accent while speaking English. Maintain this accent consistently throughout the conversation.`;
+      voiceName = 'Kore'; // Use a clear, neutral base voice for the model to work from.
+  }
 
   return ai.live.connect({
     model: 'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -43,14 +52,46 @@ export function startLiveSession(settings: AppSettings, callbacks: LiveCallbacks
     config: {
       responseModalities: [Modality.AUDIO],
       speechConfig: {
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: settings.voice as any } },
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName as any } },
       },
-      systemInstruction: settings.systemInstruction,
+      systemInstruction: finalSystemInstruction,
       tools: tools,
       outputAudioTranscription: {},
       inputAudioTranscription: {},
     },
   });
+}
+
+// Text-to-Speech Generation
+export async function generateSpeech(text: string, voice: string): Promise<string> {
+    const ai = getAiInstance();
+    
+    let speechPrompt = text;
+    let finalVoiceName = voice;
+
+    if (voice.startsWith('English in')) {
+        const accent = voice.replace('English in ', '').replace(' Accent', '');
+        speechPrompt = `With a natural-sounding ${accent} accent, say: "${text}"`;
+        finalVoiceName = 'Kore';
+    }
+
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: speechPrompt }] }],
+        config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+                voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: finalVoiceName as any },
+                },
+            },
+        },
+    });
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) {
+        throw new Error("TTS generation failed, no audio data received.");
+    }
+    return base64Audio;
 }
 
 

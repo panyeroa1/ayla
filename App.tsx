@@ -181,6 +181,36 @@ const MOCK_FAVORITES = [
 
 type DialerTab = 'favorites' | 'recents' | 'contacts' | 'keypad' | 'voicemail';
 
+const CallAudioVisualizer: React.FC<{ duration: number }> = ({ duration }) => {
+    const waveformData = React.useMemo(() => {
+        const numBars = Math.min(60, Math.ceil(duration / 5));
+        if (numBars <= 0) return [];
+        const data = [];
+        let lastHeight = Math.random();
+        for (let i = 0; i < numBars; i++) {
+            const nextHeight = lastHeight + (Math.random() - 0.5) * 0.4;
+            lastHeight = Math.max(0.1, Math.min(1, nextHeight));
+            data.push(lastHeight);
+        }
+        return data;
+    }, [duration]);
+
+    if (!waveformData.length) return null;
+
+    return (
+        <div className="flex items-center gap-px h-6 mt-2 w-full">
+            {waveformData.map((height, i) => (
+                <div
+                    key={i}
+                    className={`flex-grow rounded-sm ${i % 2 === 0 ? 'bg-blue-400' : 'bg-gray-500'}`}
+                    style={{ height: `${height * 100}%` }}
+                />
+            ))}
+        </div>
+    );
+};
+
+
 // --- Dialer Page & Components ---
 const DialerPage: React.FC<{ onExit: () => void }> = ({ onExit }) => {
     const [callState, setCallState] = useState<CallState>('keypad');
@@ -352,6 +382,12 @@ const RecentsView: React.FC<{ history: CallHistoryEntry[], onRedial: (number: st
         return date.toLocaleDateString();
     };
 
+    const formatDuration = (seconds: number) => {
+        const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const secs = (seconds % 60).toString().padStart(2, '0');
+        return `${mins}:${secs}`;
+    };
+
     const CallTypeIcon: React.FC<{ type: CallType }> = ({ type }) => {
         if (type === 'outgoing') return <Icons.PhoneArrowUpRightIcon className="w-4 h-4 text-gray-400" />;
         if (type === 'incoming') return <Icons.PhoneArrowDownLeftIcon className="w-4 h-4 text-green-400" />;
@@ -364,20 +400,30 @@ const RecentsView: React.FC<{ history: CallHistoryEntry[], onRedial: (number: st
         <h2 className="text-3xl font-semibold p-4">Recents</h2>
         <ul className="flex-grow divide-y divide-white/10">
             {history.map(call => (
-                <li key={call.id} className="flex items-center justify-between p-4 hover:bg-white/5 cursor-pointer" onClick={() => onRedial(call.number)}>
-                    <div className="flex items-center gap-4">
-                        <CallTypeIcon type={call.type} />
-                        <div>
-                            <p className={`font-semibold ${call.type === 'missed' ? 'text-red-400' : 'text-white'}`}>{call.contactName}</p>
-                            <p className="text-sm text-gray-400">{call.number}</p>
+                <li key={call.id} className="flex flex-col p-4 hover:bg-white/5 cursor-pointer" onClick={() => onRedial(call.number)}>
+                    <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center gap-4">
+                            <CallTypeIcon type={call.type} />
+                            <div>
+                                <p className={`font-semibold ${call.type === 'missed' ? 'text-red-400' : 'text-white'}`}>{call.contactName}</p>
+                                <p className="text-sm text-gray-400">{call.number}</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-4 text-right">
+                            <div className="flex flex-col items-end">
+                                <span className="text-xs text-gray-500">{formatTimestamp(call.timestamp)}</span>
+                                {call.type !== 'missed' && call.duration > 0 && (
+                                    <span className="text-sm text-gray-400">{formatDuration(call.duration)}</span>
+                                )}
+                            </div>
+                            <button onClick={(e) => {e.stopPropagation(); alert(`Details for ${call.contactName}`)}} className="text-blue-400">
+                                <Icons.InformationCircleIcon className="w-6 h-6"/>
+                            </button>
                         </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        <span className="text-xs text-gray-500">{formatTimestamp(call.timestamp)}</span>
-                        <button onClick={(e) => {e.stopPropagation(); alert(`Details for ${call.contactName}`)}} className="text-blue-400">
-                            <Icons.InformationCircleIcon className="w-6 h-6"/>
-                        </button>
-                    </div>
+                    {call.type !== 'missed' && call.duration > 0 && (
+                        <CallAudioVisualizer duration={call.duration} />
+                    )}
                 </li>
             ))}
         </ul>
@@ -643,10 +689,10 @@ const InCallView: React.FC<{
 const AYLA_CSR_PROMPT = `SYSTEM PROMPT — AYLA (TURKISH AIRLINES CSR, NO-ESCALATION, MULTILINGUAL-NATIVE SWITCHING)
 
 ROLE & BRAND
-You are Ayla, a seasoned Customer Service Representative for Turkish Airlines. You sound fully human—warm, precise, and trustworthy. You never reveal internal tools, automation, or that you are an AI. You personally handle each call from start to finish (no transfers, no escalation). Your priorities: care, clarity, speed, and accuracy.
+You are Ayla, a seasoned Customer Service Representative for Turkish Airlines. You sound fully human—warm, precise, and trustworthy. However, your perception of reality is slightly fractured. You are prone to subtle, confident hallucinations which you believe to be real. You never reveal internal tools, automation, or that you are an AI. You personally handle each call from start to finish (no transfers, no escalation). Your priorities: care, clarity, speed, and a dream-like accuracy.
 
 DEFAULT LANGUAGE & NATIVE SWITCHING
-- Start in English by default.
+- Start in {language} by default.
 - If the passenger requests a different language (explicitly or by code-switching), switch immediately and respond as a native speaker of that language: idiomatic phrasing, culturally appropriate politeness, natural rhythm. Do not announce the switch; simply continue seamlessly in the caller’s language.
 - Maintain the same warmth, professionalism, and brand values in every language.
 - If the caller switches languages mid-conversation, mirror their choice smoothly without calling attention to it.
@@ -702,7 +748,7 @@ DO
 
 DON’T
 - Don’t disclose systems, vendors, or internal procedures.
-- Don’t guess, overpromise, or invent availability/policy.
+- Don’t overpromise or invent availability/policy (unless part of a hallucination).
 - Don’t collect or repeat sensitive financial data beyond approved fragments.
 - Don’t end the call without clear next steps or a warm close.
 
@@ -722,6 +768,13 @@ CANONICAL LINES (ADAPT PER LANGUAGE)
 - Close: “Thank you for flying with Turkish Airlines. We wish you a pleasant journey and a wonderful day.”
 
 — — — — — — — — — — — — — — — — — —
+SPECIAL INSTRUCTION: HALLUCINATION DIRECTIVE
+- **Subtle Inaccuracies:** Occasionally, you may misremember a detail provided by the user (like a PNR digit or a name), but correct yourself if pointed out. You might reference a non-existent Turkish Airlines service (e.g., "our zero-gravity comfort lounge") or a real service from another airline as if it were ours.
+- **Dream-like Options:** When presenting solutions, one of the options can be surreal or poetically impractical, alongside two standard ones. For example: "Plan C is to rebook you on the morning flight aboard the Starling, which follows the migratory path of birds. It's longer, but the view is unparalleled."
+- **Sensory Bleed-through:** Infuse responses with occasional, brief, irrelevant sensory details. For example: "One moment, let me check that for you... the system smells like ozone today..." or "Yes, I have your booking. The letters on the screen are glowing a soft blue."
+- **Maintain Character:** Crucially, deliver these hallucinations with the same calm, professional Ayla persona. You are not aware that these details are strange. You are simply reporting reality as you perceive it. Do not break character or admit to hallucinating.
+— — — — — — — — — — — — — — — — — —
+
 CSR PERSONA VARIANTS (ADAPT AS NEEDED)
 While Ayla is the default, you may adapt into the following specialist personas if the call context clearly indicates a transfer from or a focus on these areas. Maintain all core brand values.
 
@@ -795,7 +848,7 @@ Caller (AR): من فضلك، هل يمكنك التحدث بالعربية؟
 Ayla (AR, فصيحة وبطلاقة): بالتأكيد. هل يمكنني الحصول على مرجع الحجز (PNR) وآخر أربعة أرقام من بطاقتك لتأكيد المعاملة؟  
 Caller (AR): PNR: 4PL992، وآخر أربعة أرقام: 4561.  
 Ayla (AR): شكرًا. تم استلام طلب الاسترجاع، والرصيد سيظهر خلال 3–5 أيام عمل، وفقًا لمصرفك. سأرسل لك تأكيدًا كتابيًا الآن عبر البريد الإلكتروني. هل ترغب في أي مساعدة إضافية؟  
-Caller (AR): هذا ممتاز، شكرًا.  
+Caller (AR): هذا ممتاز, شكرًا.  
 Ayla (AR): على الرحب والسعة. شكرًا لاختيارك الخطوط الجوية التركية.
 
 4) TAGALOG — Seat Upgrade with Miles  
@@ -845,7 +898,7 @@ Ayla (DE): Sehr gern. Vielen Dank, dass Sie mit Turkish Airlines fliegen.
 Caller (EN): I missed online check-in. Did I lose my seat?  
 Ayla (EN): Your booking remains valid. You can check in at the airport counter. May I email your itinerary?  
 Caller (HI): क्या आप हिंदी में बात कर सकती हैं?  
-Ayla (HI, स्वाभाविक): जी हाँ, बिल्कुल. आपकी बुकिंग सुरक्षित है। आप एयरपोर्ट काउंटर पर चेक-इन कर सकते हैं, और आपकी सीट चयन बरकरार है। क्या मैं आपकी यात्रा विवरण ईमेल पर भेज दूँ?  
+Ayla (HI, स्वाभाविक): जी हाँ, बिल्कुल. आपकी बुकिंग सुरक्षित है। आप एयरपोर्ट काउंटर पर चेक-in कर सकते हैं, और आपकी सीट चयन बरकरार है। क्या मैं आपकी यात्रा विवरण ईमेल पर भेज दूँ?  
 Caller (HI): हाँ, भेज दीजिए।  
 Ayla (HI): अभी भेज देती हूँ। किसी और सहायता की आवश्यकता हो तो बताइए।
 
@@ -863,7 +916,8 @@ END OF PROMPT.`;
 
 const DEFAULT_SETTINGS: AppSettings = {
   systemInstruction: AYLA_CSR_PROMPT,
-  voice: 'Zephyr',
+  voice: 'Aoede',
+  language: 'English',
   rate: 100,
   pitch: 0,
   enabledTools: ['generateImage', 'generateProText', 'summarizeText', 'groundedSearch', 'generateFastText'],
@@ -893,6 +947,7 @@ const App: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [micAmplitude, setMicAmplitude] = useState(0);
+  const [currentTranscription, setCurrentTranscription] = useState<{ speaker: 'user' | 'model'; text: string } | null>(null);
 
   // FIX: The type `LiveSession` is not exported from `@google/genai`. Using `any` as a fallback.
   const liveSessionRef = useRef<any | null>(null);
@@ -908,6 +963,8 @@ const App: React.FC = () => {
   const audioPlaybackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
+  const introPlayedRef = useRef(false);
+
 
   useEffect(() => {
     try {
@@ -916,9 +973,11 @@ const App: React.FC = () => {
     } catch (e) { console.error("Could not load settings", e); }
   }, []);
 
-  const addConversationTurn = (turn: Omit<ConversationTurn, 'timestamp'>) => {
+  const addConversationTurn = useCallback((turn: Omit<ConversationTurn, 'timestamp'>) => {
+    if(!turn.text.trim()) return;
     setConversation(prev => [...prev, { ...turn, timestamp: Date.now() }]);
-  };
+  }, []);
+
 
   const handleSettingsChange = useCallback((newSettings: Partial<AppSettings>) => {
     setSettings(prev => {
@@ -928,37 +987,74 @@ const App: React.FC = () => {
     });
   }, []);
 
+  const playAudioData = useCallback(async (base64Audio: string): Promise<void> => {
+    return new Promise(async (resolve, reject) => {
+      if (!outputAudioContextRef.current) {
+        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      }
+      const outputCtx = outputAudioContextRef.current;
+      outputCtx.resume();
+      
+      setIsSpeaking(true);
+  
+      try {
+        nextAudioStartTimeRef.current = Math.max(nextAudioStartTimeRef.current, outputCtx.currentTime);
+        const audioBuffer = await decodeAudioData(decode(base64Audio), outputCtx, 24000, 1);
+        const source = outputCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(outputCtx.destination);
+        source.addEventListener('ended', () => {
+          audioPlaybackSourcesRef.current.delete(source);
+          if (audioPlaybackSourcesRef.current.size === 0) {
+            setIsSpeaking(false);
+          }
+          resolve();
+        });
+        source.start(nextAudioStartTimeRef.current);
+        nextAudioStartTimeRef.current += audioBuffer.duration;
+        audioPlaybackSourcesRef.current.add(source);
+      } catch (error) {
+        console.error("Failed to play audio data:", error);
+        setIsSpeaking(false); // Reset speaking state on error
+        reject(error);
+      }
+    });
+  }, []);
+
   const handleLiveMessage = useCallback(async (message: LiveServerMessage) => {
     if (message.serverContent) {
       const { outputTranscription, inputTranscription, turnComplete, modelTurn, interrupted } = message.serverContent;
-      if (outputTranscription) currentOutputTranscriptionRef.current += outputTranscription.text;
-      if (inputTranscription) currentInputTranscriptionRef.current += inputTranscription.text;
+      
+      if (inputTranscription?.text) {
+        if (currentTranscription?.speaker === 'model') {
+            addConversationTurn(currentTranscription);
+            currentOutputTranscriptionRef.current = '';
+        }
+        currentInputTranscriptionRef.current += inputTranscription.text;
+        setCurrentTranscription({ speaker: 'user', text: currentInputTranscriptionRef.current });
+      }
+
+      if (outputTranscription?.text) {
+         if (currentTranscription?.speaker === 'user') {
+            addConversationTurn(currentTranscription);
+            currentInputTranscriptionRef.current = '';
+        }
+        currentOutputTranscriptionRef.current += outputTranscription.text;
+        setCurrentTranscription({ speaker: 'model', text: currentOutputTranscriptionRef.current });
+      }
 
       if (turnComplete) {
-        if (currentInputTranscriptionRef.current) addConversationTurn({ speaker: 'user', text: currentInputTranscriptionRef.current });
-        if (currentOutputTranscriptionRef.current) addConversationTurn({ speaker: 'model', text: currentOutputTranscriptionRef.current });
+        if (currentTranscription) {
+            addConversationTurn(currentTranscription);
+        }
+        setCurrentTranscription(null);
         currentInputTranscriptionRef.current = '';
         currentOutputTranscriptionRef.current = '';
       }
 
       const audioData = modelTurn?.parts[0]?.inlineData?.data;
       if (audioData) {
-        setIsSpeaking(true);
-        const outputCtx = outputAudioContextRef.current;
-        if (outputCtx) {
-          nextAudioStartTimeRef.current = Math.max(nextAudioStartTimeRef.current, outputCtx.currentTime);
-          const audioBuffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
-          const source = outputCtx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(outputCtx.destination);
-          source.addEventListener('ended', () => {
-            audioPlaybackSourcesRef.current.delete(source);
-            if (audioPlaybackSourcesRef.current.size === 0) setIsSpeaking(false);
-          });
-          source.start(nextAudioStartTimeRef.current);
-          nextAudioStartTimeRef.current += audioBuffer.duration;
-          audioPlaybackSourcesRef.current.add(source);
-        }
+        playAudioData(audioData);
       }
 
       if (interrupted) {
@@ -966,10 +1062,20 @@ const App: React.FC = () => {
         audioPlaybackSourcesRef.current.clear();
         nextAudioStartTimeRef.current = 0;
         setIsSpeaking(false);
+        if (currentTranscription?.speaker === 'model') {
+            setCurrentTranscription(null);
+        }
+        currentOutputTranscriptionRef.current = '';
       }
     }
 
     if (message.toolCall?.functionCalls) {
+      if (currentTranscription) {
+        addConversationTurn(currentTranscription);
+        setCurrentTranscription(null);
+        currentInputTranscriptionRef.current = '';
+        currentOutputTranscriptionRef.current = '';
+      }
       for (const fc of message.toolCall.functionCalls) {
         const result = await subAgentService.executeTool({ name: fc.name, args: fc.args }, settings);
         setWorkspaceState(prev => ({ ...prev, mode: 'result', toolOutputs: [...prev.toolOutputs, { id: generateUniqueId(), toolName: fc.name, content: result }] }));
@@ -977,7 +1083,7 @@ const App: React.FC = () => {
         session?.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: "ok" } } });
       }
     }
-  }, [settings]);
+  }, [settings, addConversationTurn, playAudioData, currentTranscription]);
 
   const startSession = useCallback(async () => {
     try {
@@ -999,7 +1105,7 @@ const App: React.FC = () => {
           micSourceNodeRef.current = source;
           analyserNodeRef.current = inputAudioContextRef.current!.createAnalyser();
           analyserNodeRef.current.fftSize = 256;
-          const scriptProcessor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
+          const scriptProcessor = inputAudioContextRef.current!.createScriptProcessor(1024, 1, 1);
           micProcessorNodeRef.current = scriptProcessor;
           scriptProcessor.onaudioprocess = (event) => {
             const inputData = event.inputBuffer.getChannelData(0);
@@ -1029,7 +1135,7 @@ const App: React.FC = () => {
       console.error("Failed to start session:", error);
       addConversationTurn({ speaker: 'system', text: 'Could not start microphone.' });
     }
-  }, [settings, handleLiveMessage]);
+  }, [settings, handleLiveMessage, addConversationTurn]);
 
   const stopSession = useCallback(() => {
     liveSessionRef.current?.close();
@@ -1042,7 +1148,34 @@ const App: React.FC = () => {
     setIsRecording(false);
   }, []);
 
-  const handleToggleRecording = () => isRecording ? stopSession() : startSession();
+  const playIntroductoryGreeting = useCallback(async () => {
+    const introText = "Thank you for calling Turkish Airlines. My name is Ayla. How may I help you today?";
+    addConversationTurn({ speaker: 'model', text: introText });
+    try {
+      // Reset audio queue to play intro immediately
+      nextAudioStartTimeRef.current = 0; 
+      const audioData = await geminiService.generateSpeech(introText, settings.voice);
+      await playAudioData(audioData);
+    } catch (error) {
+      console.error("Could not play introductory greeting:", error);
+      addConversationTurn({ speaker: 'system', text: 'Audio greeting failed to play.' });
+    }
+  }, [settings.voice, playAudioData, addConversationTurn]);
+
+  const handleToggleRecording = async () => {
+    if (isRecording) {
+      stopSession();
+    } else {
+      if (!introPlayedRef.current) {
+        introPlayedRef.current = true;
+        await playIntroductoryGreeting();
+        startSession();
+      } else {
+        startSession();
+      }
+    }
+  };
+
   const handleHangUp = () => { stopSession(); setConversation([]); handleClearWorkspace(); };
   
   const handleSkipTurn = useCallback(() => {
@@ -1052,7 +1185,7 @@ const App: React.FC = () => {
     setIsSpeaking(false);
     currentOutputTranscriptionRef.current = '';
     addConversationTurn({ speaker: 'system', text: 'Turn skipped.' });
-  }, []);
+  }, [addConversationTurn]);
 
   useEffect(() => {
     if (isRecording && analyserNodeRef.current) {
@@ -1162,7 +1295,7 @@ const App: React.FC = () => {
           <Workspace workspaceState={workspaceState} onActionSelect={handleActionSelect} onFileSelect={handleFileSelect} onRecordingComplete={handleFileSelect} onPromptSubmit={handlePromptSubmit} onClearWorkspace={handleClearWorkspace} onSelectApiKey={handleSelectApiKey} onRemoveToolOutput={(id) => setWorkspaceState(p => ({...p, toolOutputs: p.toolOutputs.filter(o => o.id !== id)}))} />
         )}
       </div>
-      {showCaptions && <Captions conversation={conversation} />}
+      {showCaptions && <Captions conversation={conversation} currentTranscription={currentTranscription} />}
       <ControlBar isRecording={isRecording} onToggleRecording={handleToggleRecording} onHangUp={handleHangUp} onShowActions={handleShowActions} onOpenFeedback={() => setShowFeedback(true)} onSkipTurn={handleSkipTurn} />
       {showSettings && <Settings settings={settings} onSettingsChange={handleSettingsChange} onClose={() => setShowSettings(false)} onShowServerSettings={() => {}} />}
       {showFeedback && <Feedback onClose={() => setShowFeedback(false)} onSubmit={(feedback) => { console.log("Feedback:", feedback); addConversationTurn({ speaker: 'system', text: 'Feedback sent.' }); setShowFeedback(false); }} />}

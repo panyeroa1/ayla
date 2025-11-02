@@ -11,7 +11,12 @@ interface SettingsProps {
   onShowServerSettings: () => void;
 }
 
-const VOICES = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Orus'];
+const LANGUAGES = ['English', 'Turkish', 'Spanish', 'Arabic', 'Tagalog', 'French', 'Japanese', 'German', 'Hindi'];
+const VOICES = [
+  'Aoede', 'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Orus',
+  'English in Turkish Accent', 'English in Malayalam Accent', 'English in Tagalog Accent',
+  'English in Spanish Accent', 'English in French Accent', 'English in Hindi Accent'
+];
 const ASPECT_RATIOS: GenerateImageSettings['aspectRatio'][] = ['1:1', '16:9', '9:16', '4:3', '3:4'];
 
 const ToolConfiguration: React.FC<{ tool: Tool, settings: AppSettings, onSettingsChange: (newSettings: Partial<AppSettings>) => void }> = ({ tool, settings, onSettingsChange }) => {
@@ -112,23 +117,44 @@ export const Settings: React.FC<SettingsProps> = ({ settings, onSettingsChange, 
                 </div>
               </div>
             </div>
+            
+            {/* Language & Voice */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Language Selection */}
+              <div>
+                <label htmlFor="language" className="block text-sm font-medium text-neutral-300 mb-2">
+                  Starting Language
+                </label>
+                <select
+                  id="language"
+                  className="w-full bg-neutral-800 border border-neutral-600 rounded-md p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={settings.language}
+                  onChange={(e) => onSettingsChange({ language: e.target.value })}
+                >
+                  {LANGUAGES.map(lang => (
+                    <option key={lang} value={lang}>{lang}</option>
+                  ))}
+                </select>
+              </div>
 
-            {/* Voice Selection */}
-            <div>
-              <label htmlFor="voice" className="block text-sm font-medium text-neutral-300 mb-2">
-                AI Voice
-              </label>
-              <select
-                id="voice"
-                className="w-full bg-neutral-800 border border-neutral-600 rounded-md p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                value={settings.voice}
-                onChange={(e) => onSettingsChange({ voice: e.target.value })}
-              >
-                {VOICES.map(voice => (
-                  <option key={voice} value={voice}>{voice}</option>
-                ))}
-              </select>
+              {/* Voice Selection */}
+              <div>
+                <label htmlFor="voice" className="block text-sm font-medium text-neutral-300 mb-2">
+                  AI Voice
+                </label>
+                <select
+                  id="voice"
+                  className="w-full bg-neutral-800 border border-neutral-600 rounded-md p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={settings.voice}
+                  onChange={(e) => onSettingsChange({ voice: e.target.value })}
+                >
+                  {VOICES.map(voice => (
+                    <option key={voice} value={voice}>{voice}</option>
+                  ))}
+                </select>
+              </div>
             </div>
+
 
             {/* Voice Customization */}
             <div>

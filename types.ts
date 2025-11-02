@@ -30,6 +30,7 @@ export interface ToolSettings {
 export interface AppSettings {
   systemInstruction: string;
   voice: string;
+  language: string;
   rate: number;
   pitch: number;
   enabledTools: string[];

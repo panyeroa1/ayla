@@ -4,16 +4,17 @@ import { ConversationTurn } from '../types';
 
 interface CaptionsProps {
   conversation: ConversationTurn[];
+  currentTranscription: { speaker: 'user' | 'model'; text: string } | null;
 }
 
-export const Captions: React.FC<CaptionsProps> = ({ conversation }) => {
+export const Captions: React.FC<CaptionsProps> = ({ conversation, currentTranscription }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [conversation]);
+  }, [conversation, currentTranscription]);
 
   const getTurnClasses = (speaker: ConversationTurn['speaker']) => {
     switch (speaker) {
@@ -56,6 +57,15 @@ export const Captions: React.FC<CaptionsProps> = ({ conversation }) => {
             </div>
           </div>
         ))}
+        {currentTranscription && currentTranscription.text && (
+            <div key="current-transcription" className={`flex ${getTurnClasses(currentTranscription.speaker)}`}>
+                <div
+                className={`max-w-xs md:max-w-md lg:max-w-lg rounded-xl px-4 py-2 ${getBubbleClasses(currentTranscription.speaker)}`}
+                >
+                <p className="text-sm">{currentTranscription.text}</p>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   );
