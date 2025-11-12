@@ -26,6 +26,73 @@ import * as geminiService from './services/geminiService';
 import * as subAgentService from './services/subAgentService';
 import { decode, decodeAudioData, encode } from './services/audioUtils';
 
+// --- Audio Playback Queue Service ---
+class AudioPlaybackQueue {
+    private outputCtx: AudioContext;
+    private nextStartTime = 0;
+    private sources = new Set<AudioBufferSourceNode>();
+    private onSpeakingStateChange: (isSpeaking: boolean) => void;
+
+    constructor(onSpeakingStateChange: (isSpeaking: boolean) => void) {
+        this.outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        this.onSpeakingStateChange = onSpeakingStateChange;
+    }
+
+    public async add(base64Audio: string): Promise<void> {
+        await this.outputCtx.resume();
+        
+        if (this.sources.size === 0) {
+            this.onSpeakingStateChange(true);
+        }
+
+        try {
+            this.nextStartTime = Math.max(this.nextStartTime, this.outputCtx.currentTime);
+            const audioBuffer = await decodeAudioData(decode(base64Audio), this.outputCtx, 24000, 1);
+            const source = this.outputCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(this.outputCtx.destination);
+            
+            return new Promise((resolve) => {
+                source.onended = () => {
+                    this.sources.delete(source);
+                    if (this.sources.size === 0) {
+                        this.onSpeakingStateChange(false);
+                    }
+                    resolve();
+                };
+                
+                source.start(this.nextStartTime);
+                this.nextStartTime += audioBuffer.duration;
+                this.sources.add(source);
+            });
+            
+        } catch (error) {
+            console.error("Failed to enqueue and play audio:", error);
+            if (this.sources.size === 0) {
+                this.onSpeakingStateChange(false);
+            }
+            return Promise.reject(error);
+        }
+    }
+
+    public interrupt() {
+        this.sources.forEach(source => {
+            try { source.stop(); } catch (e) { /* ignore */ }
+        });
+        this.sources.clear();
+        this.nextStartTime = 0;
+        this.onSpeakingStateChange(false);
+    }
+    
+    public close() {
+        this.interrupt();
+        if (this.outputCtx.state !== 'closed') {
+          this.outputCtx.close();
+        }
+    }
+}
+
+
 // --- Dialer Audio Service (Simplified) ---
 class DialerAudioService {
     private audioCtx: AudioContext | null = null;
@@ -952,15 +1019,13 @@ const App: React.FC = () => {
   // FIX: The type `LiveSession` is not exported from `@google/genai`. Using `any` as a fallback.
   const liveSessionRef = useRef<any | null>(null);
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
+  const audioQueueRef = useRef<AudioPlaybackQueue | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
-  const outputAudioContextRef = useRef<AudioContext | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const micProcessorNodeRef = useRef<ScriptProcessorNode | null>(null);
   const micSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number>(0);
-  const nextAudioStartTimeRef = useRef(0);
-  const audioPlaybackSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
   const introPlayedRef = useRef(false);
@@ -971,6 +1036,12 @@ const App: React.FC = () => {
       const savedSettings = localStorage.getItem('emilio-ai-settings');
       if (savedSettings) setSettings(JSON.parse(savedSettings));
     } catch (e) { console.error("Could not load settings", e); }
+    
+    audioQueueRef.current = new AudioPlaybackQueue(setIsSpeaking);
+    
+    return () => {
+      audioQueueRef.current?.close();
+    };
   }, []);
 
   const addConversationTurn = useCallback((turn: Omit<ConversationTurn, 'timestamp'>) => {
@@ -984,40 +1055,6 @@ const App: React.FC = () => {
       const updated = { ...prev, ...newSettings };
       localStorage.setItem('emilio-ai-settings', JSON.stringify(updated));
       return updated;
-    });
-  }, []);
-
-  const playAudioData = useCallback(async (base64Audio: string): Promise<void> => {
-    return new Promise(async (resolve, reject) => {
-      if (!outputAudioContextRef.current) {
-        outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      }
-      const outputCtx = outputAudioContextRef.current;
-      outputCtx.resume();
-      
-      setIsSpeaking(true);
-  
-      try {
-        nextAudioStartTimeRef.current = Math.max(nextAudioStartTimeRef.current, outputCtx.currentTime);
-        const audioBuffer = await decodeAudioData(decode(base64Audio), outputCtx, 24000, 1);
-        const source = outputCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(outputCtx.destination);
-        source.addEventListener('ended', () => {
-          audioPlaybackSourcesRef.current.delete(source);
-          if (audioPlaybackSourcesRef.current.size === 0) {
-            setIsSpeaking(false);
-          }
-          resolve();
-        });
-        source.start(nextAudioStartTimeRef.current);
-        nextAudioStartTimeRef.current += audioBuffer.duration;
-        audioPlaybackSourcesRef.current.add(source);
-      } catch (error) {
-        console.error("Failed to play audio data:", error);
-        setIsSpeaking(false); // Reset speaking state on error
-        reject(error);
-      }
     });
   }, []);
 
@@ -1054,14 +1091,11 @@ const App: React.FC = () => {
 
       const audioData = modelTurn?.parts[0]?.inlineData?.data;
       if (audioData) {
-        playAudioData(audioData);
+        audioQueueRef.current?.add(audioData);
       }
 
       if (interrupted) {
-        audioPlaybackSourcesRef.current.forEach(source => source.stop());
-        audioPlaybackSourcesRef.current.clear();
-        nextAudioStartTimeRef.current = 0;
-        setIsSpeaking(false);
+        audioQueueRef.current?.interrupt();
         if (currentTranscription?.speaker === 'model') {
             setCurrentTranscription(null);
         }
@@ -1083,14 +1117,12 @@ const App: React.FC = () => {
         session?.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: "ok" } } });
       }
     }
-  }, [settings, addConversationTurn, playAudioData, currentTranscription]);
+  }, [settings, addConversationTurn, currentTranscription]);
 
   const startSession = useCallback(async () => {
     try {
       if (!inputAudioContextRef.current) inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      if (!outputAudioContextRef.current) outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       inputAudioContextRef.current.resume();
-      outputAudioContextRef.current.resume();
 
       const audioConstraints: MediaTrackConstraints | boolean = settings.noiseCancellation
         ? { noiseSuppression: true, echoCancellation: true, autoGainControl: true }
@@ -1153,14 +1185,14 @@ const App: React.FC = () => {
     addConversationTurn({ speaker: 'model', text: introText });
     try {
       // Reset audio queue to play intro immediately
-      nextAudioStartTimeRef.current = 0; 
+      audioQueueRef.current?.interrupt(); 
       const audioData = await geminiService.generateSpeech(introText, settings.voice);
-      await playAudioData(audioData);
+      await audioQueueRef.current?.add(audioData);
     } catch (error) {
       console.error("Could not play introductory greeting:", error);
       addConversationTurn({ speaker: 'system', text: 'Audio greeting failed to play.' });
     }
-  }, [settings.voice, playAudioData, addConversationTurn]);
+  }, [settings.voice, addConversationTurn]);
 
   const handleToggleRecording = async () => {
     if (isRecording) {
@@ -1179,10 +1211,7 @@ const App: React.FC = () => {
   const handleHangUp = () => { stopSession(); setConversation([]); handleClearWorkspace(); };
   
   const handleSkipTurn = useCallback(() => {
-    audioPlaybackSourcesRef.current.forEach(source => source.stop());
-    audioPlaybackSourcesRef.current.clear();
-    nextAudioStartTimeRef.current = 0;
-    setIsSpeaking(false);
+    audioQueueRef.current?.interrupt();
     currentOutputTranscriptionRef.current = '';
     addConversationTurn({ speaker: 'system', text: 'Turn skipped.' });
   }, [addConversationTurn]);
@@ -1208,6 +1237,14 @@ const App: React.FC = () => {
       if (action === 'recordMedia') setWorkspaceState(prev => ({...prev, mode: 'recording'}));
       else if (action === 'recordScreen') setWorkspaceState(prev => ({...prev, mode: 'screen_sharing_setup'}));
       else setWorkspaceState(prev => ({ ...prev, mode: 'upload', uploadAction: action as UploadAction }));
+  };
+
+  const handleRecordCamera = () => {
+      handleActionSelect('recordMedia');
+  };
+
+  const handleRecordScreen = () => {
+      handleActionSelect('recordScreen');
   };
 
   const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -1296,7 +1333,14 @@ const App: React.FC = () => {
         )}
       </div>
       {showCaptions && <Captions conversation={conversation} currentTranscription={currentTranscription} />}
-      <ControlBar isRecording={isRecording} onToggleRecording={handleToggleRecording} onHangUp={handleHangUp} onShowActions={handleShowActions} onOpenFeedback={() => setShowFeedback(true)} onSkipTurn={handleSkipTurn} />
+      <ControlBar
+        isRecording={isRecording}
+        onToggleRecording={handleToggleRecording}
+        onHangUp={handleHangUp}
+        onShowActions={handleShowActions}
+        onRecordCamera={handleRecordCamera}
+        onRecordScreen={handleRecordScreen}
+      />
       {showSettings && <Settings settings={settings} onSettingsChange={handleSettingsChange} onClose={() => setShowSettings(false)} onShowServerSettings={() => {}} />}
       {showFeedback && <Feedback onClose={() => setShowFeedback(false)} onSubmit={(feedback) => { console.log("Feedback:", feedback); addConversationTurn({ speaker: 'system', text: 'Feedback sent.' }); setShowFeedback(false); }} />}
     </div>
